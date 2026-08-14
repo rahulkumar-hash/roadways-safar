@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Track } from '../types';
-import { PLAYLIST_TRACKS, YOUTUBE_PLAYLIST_ID } from '../data/busData';
+import { PLAYLIST_TRACKS } from '../data/busData';
 import { ambientBusAudio } from '../utils/audioSynthesizer';
 import {
   Play,
@@ -12,21 +12,30 @@ import {
   ListMusic,
   Sliders,
   Radio,
-  Sparkles,
   ExternalLink,
   Search,
   Shuffle,
   Repeat,
   Music,
   X,
+  Tv,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
+
+declare global {
+  interface Window {
+    YT: any;
+    onYouTubeIframeAPIReady: () => void;
+  }
+}
 
 interface MusicPlayerProps {
   isMuted: boolean;
   setIsMuted: (m: boolean) => void;
 }
 
-// Helper to convert mm:ss to seconds
+// Convert mm:ss to seconds
 function parseDurationToSec(durationStr: string): number {
   if (!durationStr) return 240;
   const parts = durationStr.split(':');
@@ -36,10 +45,12 @@ function parseDurationToSec(durationStr: string): number {
   return 240;
 }
 
-// Audio sound for cassette button click / switch
+// Retro cassette mechanical click sound
 function playCassetteClickSound() {
   try {
-    const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    const AudioCtx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     const ctx = new AudioCtx();
     const now = ctx.currentTime;
 
@@ -47,18 +58,18 @@ function playCassetteClickSound() {
     const gain = ctx.createGain();
 
     osc.type = 'triangle';
-    osc.frequency.setValueAtTime(450, now);
-    osc.frequency.exponentialRampToValueAtTime(120, now + 0.06);
+    osc.frequency.setValueAtTime(500, now);
+    osc.frequency.exponentialRampToValueAtTime(100, now + 0.05);
 
     gain.gain.setValueAtTime(0.3, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
 
     osc.connect(gain);
     gain.connect(ctx.destination);
     osc.start(now);
-    osc.stop(now + 0.07);
+    osc.stop(now + 0.06);
   } catch (err) {
-    // Ignore if audio context not permitted yet
+    // Ignore if blocked by browser
   }
 }
 
@@ -70,22 +81,191 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
   const [isPlaying, setIsPlaying] = useState(false);
   const [progressPercent, setProgressPercent] = useState(0);
   const [currentTimeSec, setCurrentTimeSec] = useState(0);
-  const [volume, setVolume] = useState(80);
   const [showPlaylist, setShowPlaylist] = useState(false);
   const [showAmbientMixer, setShowAmbientMixer] = useState(false);
+  const [showMiniScreen, setShowMiniScreen] = useState(false);
   const [engineVol, setEngineVol] = useState(8);
   const [windVol, setWindVol] = useState(5);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [isShuffle, setIsShuffle] = useState(false);
   const [isRepeat, setIsRepeat] = useState(false);
+  const [playerReady, setPlayerReady] = useState(false);
 
   const currentTrack = PLAYLIST_TRACKS[currentTrackIndex] || PLAYLIST_TRACKS[0];
   const durationSec = useMemo(() => parseDurationToSec(currentTrack.duration), [currentTrack]);
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-  const playlistContainerRef = useRef<HTMLDivElement>(null);
+  const playerRef = useRef<any>(null);
+  const isPlayingRef = useRef(isPlaying);
+  isPlayingRef.current = isPlaying;
 
-  // Sync ambient audio on volume change
+  const currentTrackIndexRef = useRef(currentTrackIndex);
+  currentTrackIndexRef.current = currentTrackIndex;
+
+  const isShuffleRef = useRef(isShuffle);
+  isShuffleRef.current = isShuffle;
+
+  const isRepeatRef = useRef(isRepeat);
+  isRepeatRef.current = isRepeat;
+
+  // Handle Next Track Function (memoized)
+  const handleNext = useCallback(() => {
+    playCassetteClickSound();
+    let nextIdx = 0;
+    if (isShuffleRef.current) {
+      nextIdx = Math.floor(Math.random() * PLAYLIST_TRACKS.length);
+    } else {
+      nextIdx = (currentTrackIndexRef.current + 1) % PLAYLIST_TRACKS.length;
+    }
+    const nextTrack = PLAYLIST_TRACKS[nextIdx];
+    setCurrentTrackIndex(nextIdx);
+    setCurrentTimeSec(0);
+    setProgressPercent(0);
+    setIsPlaying(true);
+
+    if (playerRef.current && playerRef.current.loadVideoById) {
+      try {
+        playerRef.current.loadVideoById({
+          videoId: nextTrack.youtubeId,
+          startSeconds: 0,
+        });
+        playerRef.current.playVideo();
+      } catch (e) {
+        console.warn('YT load error:', e);
+      }
+    }
+  }, []);
+
+  // Handle Previous Track Function (memoized)
+  const handlePrev = useCallback(() => {
+    playCassetteClickSound();
+    let prevIdx = 0;
+    if (isShuffleRef.current) {
+      prevIdx = Math.floor(Math.random() * PLAYLIST_TRACKS.length);
+    } else {
+      prevIdx = (currentTrackIndexRef.current - 1 + PLAYLIST_TRACKS.length) % PLAYLIST_TRACKS.length;
+    }
+    const prevTrack = PLAYLIST_TRACKS[prevIdx];
+    setCurrentTrackIndex(prevIdx);
+    setCurrentTimeSec(0);
+    setProgressPercent(0);
+    setIsPlaying(true);
+
+    if (playerRef.current && playerRef.current.loadVideoById) {
+      try {
+        playerRef.current.loadVideoById({
+          videoId: prevTrack.youtubeId,
+          startSeconds: 0,
+        });
+        playerRef.current.playVideo();
+      } catch (e) {
+        console.warn('YT load error:', e);
+      }
+    }
+  }, []);
+
+  // Handle direct track selection from 100 songs playlist
+  const handleSelectTrack = useCallback((index: number) => {
+    playCassetteClickSound();
+    const targetTrack = PLAYLIST_TRACKS[index];
+    setCurrentTrackIndex(index);
+    setCurrentTimeSec(0);
+    setProgressPercent(0);
+    setIsPlaying(true);
+
+    if (playerRef.current && playerRef.current.loadVideoById) {
+      try {
+        playerRef.current.loadVideoById({
+          videoId: targetTrack.youtubeId,
+          startSeconds: 0,
+        });
+        playerRef.current.playVideo();
+      } catch (e) {
+        console.warn('YT select load error:', e);
+      }
+    }
+  }, []);
+
+  // Initialize YouTube Iframe Player API
+  useEffect(() => {
+    const initPlayer = () => {
+      if (!window.YT || !window.YT.Player) return;
+      if (playerRef.current) return;
+
+      try {
+        playerRef.current = new window.YT.Player('roadways-yt-player-slot', {
+          height: '180',
+          width: '280',
+          videoId: currentTrack.youtubeId,
+          playerVars: {
+            autoplay: 0,
+            controls: 1,
+            modestbranding: 1,
+            rel: 0,
+            playsinline: 1,
+            enablejsapi: 1,
+            origin: typeof window !== 'undefined' ? window.location.origin : '',
+          },
+          events: {
+            onReady: (event: any) => {
+              setPlayerReady(true);
+              if (isMuted) {
+                event.target.mute();
+              }
+            },
+            onStateChange: (event: any) => {
+              // 1: PLAYING, 2: PAUSED, 0: ENDED
+              if (event.data === 1) {
+                setIsPlaying(true);
+              } else if (event.data === 2) {
+                setIsPlaying(false);
+              } else if (event.data === 0) {
+                if (isRepeatRef.current) {
+                  event.target.seekTo(0, true);
+                  event.target.playVideo();
+                } else {
+                  handleNext();
+                }
+              }
+            },
+            onError: (err: any) => {
+              console.warn('YouTube Error, auto-switching:', err);
+            },
+          },
+        });
+      } catch (err) {
+        console.warn('YT Player init error:', err);
+      }
+    };
+
+    if (!window.YT) {
+      const tag = document.createElement('script');
+      tag.src = 'https://www.youtube.com/iframe_api';
+      tag.async = true;
+      window.onYouTubeIframeAPIReady = () => {
+        initPlayer();
+      };
+      document.body.appendChild(tag);
+    } else {
+      initPlayer();
+    }
+  }, [currentTrack.youtubeId, handleNext, isMuted]);
+
+  // Sync Mute state with YouTube player
+  useEffect(() => {
+    if (playerRef.current && playerRef.current.mute && playerRef.current.unMute) {
+      try {
+        if (isMuted) {
+          playerRef.current.mute();
+        } else {
+          playerRef.current.unMute();
+        }
+      } catch (e) {
+        // Ignore
+      }
+    }
+  }, [isMuted]);
+
+  // Ambient sound sync
   useEffect(() => {
     if (isPlaying && !isMuted) {
       ambientBusAudio.start(engineVol / 100, windVol / 100);
@@ -94,36 +274,83 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
     }
   }, [isPlaying, isMuted, engineVol, windVol]);
 
-  // Simulate progress playback timer & auto-advance to next song
+  // Progress sync timer
   useEffect(() => {
     let interval: NodeJS.Timeout | null = null;
     if (isPlaying) {
       interval = setInterval(() => {
-        setCurrentTimeSec((prev) => {
-          if (prev >= durationSec) {
-            if (isRepeat) {
-              return 0;
-            } else {
+        if (playerRef.current && playerRef.current.getCurrentTime && playerRef.current.getDuration) {
+          try {
+            const cur = Math.floor(playerRef.current.getCurrentTime() || 0);
+            const dur = Math.floor(playerRef.current.getDuration() || durationSec);
+            setCurrentTimeSec(cur);
+            if (dur > 0) {
+              setProgressPercent(Math.min(100, (cur / dur) * 100));
+            }
+          } catch (e) {
+            setCurrentTimeSec((prev) => prev + 1);
+          }
+        } else {
+          setCurrentTimeSec((prev) => {
+            if (prev >= durationSec) {
               handleNext();
               return 0;
             }
-          }
-          return prev + 1;
-        });
+            return prev + 1;
+          });
+        }
       }, 1000);
     }
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [isPlaying, durationSec, isRepeat, currentTrackIndex, isShuffle]);
+  }, [isPlaying, durationSec, handleNext]);
 
-  useEffect(() => {
-    if (durationSec > 0) {
-      setProgressPercent(Math.min(100, (currentTimeSec / durationSec) * 100));
+  // Play / Pause toggle
+  const togglePlay = () => {
+    playCassetteClickSound();
+    const nextState = !isPlaying;
+    setIsPlaying(nextState);
+
+    if (playerRef.current) {
+      try {
+        if (nextState) {
+          playerRef.current.playVideo();
+        } else {
+          playerRef.current.pauseVideo();
+        }
+      } catch (e) {
+        console.warn('Play/Pause error:', e);
+      }
     }
-  }, [currentTimeSec, durationSec]);
+  };
 
-  // Global Keyboard Shortcuts for player
+  // Seek bar scrubber
+  const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const width = rect.width;
+    const newPercent = Math.max(0, Math.min(100, (clickX / width) * 100));
+    setProgressPercent(newPercent);
+    const newTime = Math.floor((newPercent / 100) * durationSec);
+    setCurrentTimeSec(newTime);
+
+    if (playerRef.current && playerRef.current.seekTo) {
+      try {
+        playerRef.current.seekTo(newTime, true);
+      } catch (e) {
+        // Ignore
+      }
+    }
+  };
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+  };
+
+  // Keyboard Shortcuts
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) {
@@ -149,82 +376,9 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
 
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [isPlaying, isMuted, currentTrackIndex, isShuffle]);
+  }, [handleNext, handlePrev, isMuted, isPlaying]);
 
-  // Play / Pause toggle
-  const togglePlay = () => {
-    playCassetteClickSound();
-    const nextState = !isPlaying;
-    setIsPlaying(nextState);
-
-    if (iframeRef.current && iframeRef.current.contentWindow) {
-      const message = nextState
-        ? JSON.stringify({ event: 'command', func: 'playVideo', args: '' })
-        : JSON.stringify({ event: 'command', func: 'pauseVideo', args: '' });
-      iframeRef.current.contentWindow.postMessage(message, '*');
-    }
-  };
-
-  const handleNext = () => {
-    playCassetteClickSound();
-    let nextIdx = 0;
-    if (isShuffle) {
-      nextIdx = Math.floor(Math.random() * PLAYLIST_TRACKS.length);
-    } else {
-      nextIdx = (currentTrackIndex + 1) % PLAYLIST_TRACKS.length;
-    }
-    setCurrentTrackIndex(nextIdx);
-    setCurrentTimeSec(0);
-    setProgressPercent(0);
-    setIsPlaying(true);
-  };
-
-  const handlePrev = () => {
-    playCassetteClickSound();
-    let prevIdx = 0;
-    if (isShuffle) {
-      prevIdx = Math.floor(Math.random() * PLAYLIST_TRACKS.length);
-    } else {
-      prevIdx = (currentTrackIndex - 1 + PLAYLIST_TRACKS.length) % PLAYLIST_TRACKS.length;
-    }
-    setCurrentTrackIndex(prevIdx);
-    setCurrentTimeSec(0);
-    setProgressPercent(0);
-    setIsPlaying(true);
-  };
-
-  const handleSelectTrack = (index: number) => {
-    playCassetteClickSound();
-    setCurrentTrackIndex(index);
-    setCurrentTimeSec(0);
-    setProgressPercent(0);
-    setIsPlaying(true);
-  };
-
-  const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const clickX = e.clientX - rect.left;
-    const width = rect.width;
-    const newPercent = Math.max(0, Math.min(100, (clickX / width) * 100));
-    setProgressPercent(newPercent);
-    const newTime = Math.floor((newPercent / 100) * durationSec);
-    setCurrentTimeSec(newTime);
-
-    if (iframeRef.current && iframeRef.current.contentWindow) {
-      iframeRef.current.contentWindow.postMessage(
-        JSON.stringify({ event: 'command', func: 'seekTo', args: [newTime, true] }),
-        '*'
-      );
-    }
-  };
-
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
-  };
-
-  // Filter 100 tracks based on search query and category
+  // Filter 100 tracks
   const filteredTracks = useMemo(() => {
     return PLAYLIST_TRACKS.filter((track, idx) => {
       const q = searchQuery.toLowerCase().trim();
@@ -264,29 +418,28 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
 
   return (
     <>
-      {/* Offscreen Active YouTube Embed for authentic streaming audio (never throttled) */}
+      {/* YouTube Player Slot - Rendered visibly or offscreen so browser NEVER freezes or throttles audio */}
       <div
-        style={{
-          position: 'fixed',
-          bottom: 0,
-          right: 0,
-          width: '200px',
-          height: '200px',
-          opacity: 0.001,
-          pointerEvents: 'none',
-          zIndex: -50,
-        }}
+        className={`fixed z-50 transition-all duration-300 ${
+          showMiniScreen
+            ? 'bottom-28 right-4 sm:right-8 bg-neutral-900 border-2 border-amber-500 rounded-2xl shadow-2xl p-2'
+            : 'pointer-events-none opacity-0 -bottom-96 -right-96 w-1 h-1'
+        }`}
       >
-        <iframe
-          ref={iframeRef}
-          id="yt-roadways-audio-stream"
-          width="200"
-          height="200"
-          src={`https://www.youtube.com/embed/${currentTrack.youtubeId}?enablejsapi=1&autoplay=${isPlaying ? 1 : 0}&loop=1&playlist=${currentTrack.youtubeId}&origin=${typeof window !== 'undefined' ? window.location.origin : ''}`}
-          title="Roadways Safar Music Audio"
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-          tabIndex={-1}
-        />
+        {showMiniScreen && (
+          <div className="flex items-center justify-between pb-1.5 px-1 text-xs text-amber-300 font-bold border-b border-neutral-800 mb-1">
+            <span className="flex items-center gap-1">
+              <Tv className="w-3.5 h-3.5" /> मिनी स्क्रीन (Roadways TV)
+            </span>
+            <button
+              onClick={() => setShowMiniScreen(false)}
+              className="text-neutral-400 hover:text-white"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+        <div id="roadways-yt-player-slot" className="rounded-xl overflow-hidden shadow" />
       </div>
 
       {/* 100 SONGS CASSETTE PLAYLIST MODAL */}
@@ -307,14 +460,14 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
                     </span>
                   </h3>
                   <p className="text-[11px] text-neutral-400 font-hindi">
-                    हाईवे के सदाबहार नगमे, 70s, 80s, 90s और 2000s के क्लासिक सफर के गीत
+                    गाना सेलेक्ट करें और तुरंत बजना शुरू हो जाएगा
                   </p>
                 </div>
               </div>
               <button
                 onClick={() => setShowPlaylist(false)}
                 className="p-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-neutral-400 hover:text-white transition-colors cursor-pointer"
-                title="Close Playlist"
+                title="Close Playlist (L)"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -348,7 +501,7 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
                   { id: 'all', label: `All (${PLAYLIST_TRACKS.length})` },
                   { id: 'retro', label: '70s-80s Retro' },
                   { id: '90s', label: '90s Evergreen' },
-                  { id: '2000s', label: '2000s-Modern' },
+                  { id: '2000s', label: '2000s Hits' },
                   { id: 'highway', label: 'Highway & Safar' },
                   { id: 'sufi', label: 'Dhaba & Sufi' },
                 ].map((cat) => (
@@ -368,10 +521,7 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
             </div>
 
             {/* Scrollable Song List */}
-            <div
-              ref={playlistContainerRef}
-              className="overflow-y-auto my-2 space-y-1.5 pr-1 flex-1 custom-scrollbar"
-            >
+            <div className="overflow-y-auto my-2 space-y-1.5 pr-1 flex-1 custom-scrollbar">
               {filteredTracks.length === 0 ? (
                 <div className="p-8 text-center text-neutral-500 text-xs">
                   कोई गाना नहीं मिला "{searchQuery}"
@@ -409,8 +559,13 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
 
                         {/* Title and details */}
                         <div className="min-w-0">
-                          <div className="text-xs sm:text-sm font-bold truncate">
-                            {track.title}
+                          <div className="text-xs sm:text-sm font-bold truncate flex items-center gap-1.5">
+                            <span>{track.title}</span>
+                            {isCurrent && (
+                              <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-500 text-neutral-950 font-bold font-mono">
+                                PLAYING
+                              </span>
+                            )}
                           </div>
                           <div className="text-[11px] text-neutral-400 truncate flex items-center gap-2">
                             <span>{track.movie}</span>
@@ -437,17 +592,26 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
 
             {/* Footer */}
             <div className="pt-2 border-t border-neutral-800 flex items-center justify-between text-xs text-neutral-400 shrink-0">
-              <span className="font-hindi text-[11px]">
-                बज रहा है: <strong className="text-amber-300">#{currentTrackIndex + 1} {currentTrack.title}</strong>
+              <span className="font-hindi text-[11px] truncate max-w-[280px]">
+                अभी बज रहा: <strong className="text-amber-300">#{currentTrackIndex + 1} {currentTrack.title}</strong>
               </span>
-              <a
-                href={`https://www.youtube.com/watch?v=${currentTrack.youtubeId}&list=${YOUTUBE_PLAYLIST_ID}`}
-                target="_blank"
-                rel="noreferrer"
-                className="text-amber-400 hover:text-amber-300 hover:underline flex items-center gap-1 text-[11px]"
-              >
-                Open in YouTube <ExternalLink className="w-3 h-3" />
-              </a>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setShowMiniScreen(!showMiniScreen)}
+                  className="text-amber-400 hover:text-amber-300 flex items-center gap-1 text-[11px] cursor-pointer"
+                >
+                  <Tv className="w-3 h-3" />
+                  <span>{showMiniScreen ? 'Hide Video' : 'Show Video'}</span>
+                </button>
+                <a
+                  href={`https://www.youtube.com/watch?v=${currentTrack.youtubeId}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-amber-400 hover:text-amber-300 hover:underline flex items-center gap-1 text-[11px]"
+                >
+                  YouTube Link <ExternalLink className="w-3 h-3" />
+                </a>
+              </div>
             </div>
           </div>
         </div>
@@ -532,7 +696,7 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
             <div
               onClick={() => setShowPlaylist(true)}
               className="w-9 h-9 sm:w-11 sm:h-11 rounded-xl bg-gradient-to-tr from-amber-600 to-yellow-500 flex items-center justify-center text-neutral-950 font-bold shrink-0 shadow-lg cursor-pointer relative overflow-hidden group"
-              title="Click to open 100 Songs Cassette Tape Playlist"
+              title="Click to open 100 Songs Cassette Tape Playlist (L)"
             >
               {/* Rotating Tape Reels */}
               <div className="flex items-center gap-1">
@@ -576,7 +740,7 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
               {/* Shuffle button */}
               <button
                 onClick={() => setIsShuffle(!isShuffle)}
-                className={`p-1 sm:p-1.5 rounded-xl transition-colors ${
+                className={`p-1 sm:p-1.5 rounded-xl transition-colors cursor-pointer ${
                   isShuffle ? 'text-amber-400 bg-amber-500/20' : 'text-neutral-500 hover:text-neutral-300'
                 }`}
                 title={isShuffle ? 'Shuffle ON' : 'Shuffle OFF'}
@@ -589,7 +753,7 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
                 id="player-prev-btn"
                 onClick={handlePrev}
                 className="p-1 sm:p-1.5 rounded-xl text-neutral-300 hover:text-white hover:bg-neutral-800 transition-all active:scale-90 cursor-pointer"
-                title="Previous Track (Left Arrow / P)"
+                title="Previous Track (P / ←)"
               >
                 <SkipBack className="w-4 h-4 sm:w-5 sm:h-5" />
               </button>
@@ -609,7 +773,7 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
                 id="player-next-btn"
                 onClick={handleNext}
                 className="p-1 sm:p-1.5 rounded-xl text-neutral-300 hover:text-white hover:bg-neutral-800 transition-all active:scale-90 cursor-pointer"
-                title="Next Track (Right Arrow / N)"
+                title="Next Track (N / →)"
               >
                 <SkipForward className="w-4 h-4 sm:w-5 sm:h-5" />
               </button>
@@ -617,7 +781,7 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
               {/* Repeat button */}
               <button
                 onClick={() => setIsRepeat(!isRepeat)}
-                className={`p-1 sm:p-1.5 rounded-xl transition-colors ${
+                className={`p-1 sm:p-1.5 rounded-xl transition-colors cursor-pointer ${
                   isRepeat ? 'text-amber-400 bg-amber-500/20' : 'text-neutral-500 hover:text-neutral-300'
                 }`}
                 title={isRepeat ? 'Repeat Song ON' : 'Repeat OFF'}
@@ -634,23 +798,20 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
             </div>
           </div>
 
-          {/* Right: Atmosphere Mixer, 100 Playlist Drawer & Mute */}
+          {/* Right: Atmosphere Mixer, Mini Video Toggle, 100 Playlist Drawer & Mute */}
           <div className="flex items-center gap-1.5 sm:gap-2.5 justify-end flex-1 shrink-0">
-            {/* Animated Equalizer Wave Bars */}
-            <div className="hidden xl:flex items-end gap-1 h-5 px-2 bg-neutral-900/80 rounded-lg border border-neutral-800">
-              {[60, 100, 40, 80, 50, 90, 30].map((h, i) => (
-                <div
-                  key={i}
-                  className={`w-0.5 bg-amber-400 rounded-full transition-all ${
-                    isPlaying ? 'animate-pulse' : 'h-1 opacity-40'
-                  }`}
-                  style={{
-                    height: isPlaying ? `${Math.max(20, h * (isPlaying ? 1 : 0.2))}%` : '20%',
-                    animationDuration: `${0.4 + (i % 3) * 0.2}s`,
-                  }}
-                />
-              ))}
-            </div>
+            {/* Video Screen Toggle */}
+            <button
+              onClick={() => setShowMiniScreen(!showMiniScreen)}
+              className={`p-1.5 sm:p-2 rounded-xl text-xs flex items-center gap-1 border transition-colors cursor-pointer ${
+                showMiniScreen
+                  ? 'bg-amber-500/20 border-amber-500 text-amber-300'
+                  : 'bg-neutral-900 border-neutral-800 text-neutral-400 hover:text-white'
+              }`}
+              title="Toggle Mini Video Screen"
+            >
+              <Tv className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+            </button>
 
             {/* Atmosphere Mixer Trigger */}
             <button
