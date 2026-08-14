@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Track } from '../types';
 import { PLAYLIST_TRACKS } from '../data/busData';
-import { ambientBusAudio } from '../utils/audioSynthesizer';
+import { ambientBusAudio, roadwaysMelodyPlayer, playPressureHorn } from '../utils/audioSynthesizer';
 import {
   Play,
   Pause,
@@ -19,8 +19,6 @@ import {
   Music,
   X,
   Tv,
-  Eye,
-  EyeOff,
 } from 'lucide-react';
 
 declare global {
@@ -35,7 +33,6 @@ interface MusicPlayerProps {
   setIsMuted: (m: boolean) => void;
 }
 
-// Convert mm:ss to seconds
 function parseDurationToSec(durationStr: string): number {
   if (!durationStr) return 240;
   const parts = durationStr.split(':');
@@ -43,34 +40,6 @@ function parseDurationToSec(durationStr: string): number {
     return parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
   }
   return 240;
-}
-
-// Retro cassette mechanical click sound
-function playCassetteClickSound() {
-  try {
-    const AudioCtx =
-      window.AudioContext ||
-      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    const ctx = new AudioCtx();
-    const now = ctx.currentTime;
-
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-
-    osc.type = 'triangle';
-    osc.frequency.setValueAtTime(500, now);
-    osc.frequency.exponentialRampToValueAtTime(100, now + 0.05);
-
-    gain.gain.setValueAtTime(0.3, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
-
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start(now);
-    osc.stop(now + 0.06);
-  } catch (err) {
-    // Ignore if blocked by browser
-  }
 }
 
 export const MusicPlayer: React.FC<MusicPlayerProps> = ({
@@ -90,13 +59,10 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [isShuffle, setIsShuffle] = useState(false);
   const [isRepeat, setIsRepeat] = useState(false);
-  const [playerReady, setPlayerReady] = useState(false);
 
   const currentTrack = PLAYLIST_TRACKS[currentTrackIndex] || PLAYLIST_TRACKS[0];
   const durationSec = useMemo(() => parseDurationToSec(currentTrack.duration), [currentTrack]);
   const playerRef = useRef<any>(null);
-  const isPlayingRef = useRef(isPlaying);
-  isPlayingRef.current = isPlaying;
 
   const currentTrackIndexRef = useRef(currentTrackIndex);
   currentTrackIndexRef.current = currentTrackIndex;
@@ -107,9 +73,8 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
   const isRepeatRef = useRef(isRepeat);
   isRepeatRef.current = isRepeat;
 
-  // Handle Next Track Function (memoized)
+  // Handle Next Track Function
   const handleNext = useCallback(() => {
-    playCassetteClickSound();
     let nextIdx = 0;
     if (isShuffleRef.current) {
       nextIdx = Math.floor(Math.random() * PLAYLIST_TRACKS.length);
@@ -122,6 +87,10 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
     setProgressPercent(0);
     setIsPlaying(true);
 
+    // Instant Synthesizer playback (100% reliable on Mobile and Desktop)
+    roadwaysMelodyPlayer.playTrack(nextIdx);
+
+    // YouTube switch if ready
     if (playerRef.current && playerRef.current.loadVideoById) {
       try {
         playerRef.current.loadVideoById({
@@ -130,14 +99,13 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
         });
         playerRef.current.playVideo();
       } catch (e) {
-        console.warn('YT load error:', e);
+        // Ignore fallback
       }
     }
   }, []);
 
-  // Handle Previous Track Function (memoized)
+  // Handle Previous Track Function
   const handlePrev = useCallback(() => {
-    playCassetteClickSound();
     let prevIdx = 0;
     if (isShuffleRef.current) {
       prevIdx = Math.floor(Math.random() * PLAYLIST_TRACKS.length);
@@ -150,6 +118,10 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
     setProgressPercent(0);
     setIsPlaying(true);
 
+    // Instant Synthesizer playback (100% reliable on Mobile and Desktop)
+    roadwaysMelodyPlayer.playTrack(prevIdx);
+
+    // YouTube switch if ready
     if (playerRef.current && playerRef.current.loadVideoById) {
       try {
         playerRef.current.loadVideoById({
@@ -158,20 +130,23 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
         });
         playerRef.current.playVideo();
       } catch (e) {
-        console.warn('YT load error:', e);
+        // Ignore fallback
       }
     }
   }, []);
 
   // Handle direct track selection from 100 songs playlist
   const handleSelectTrack = useCallback((index: number) => {
-    playCassetteClickSound();
     const targetTrack = PLAYLIST_TRACKS[index];
     setCurrentTrackIndex(index);
     setCurrentTimeSec(0);
     setProgressPercent(0);
     setIsPlaying(true);
 
+    // Instant Synthesizer playback (100% reliable on Mobile and Desktop)
+    roadwaysMelodyPlayer.playTrack(index);
+
+    // YouTube switch if ready
     if (playerRef.current && playerRef.current.loadVideoById) {
       try {
         playerRef.current.loadVideoById({
@@ -180,7 +155,7 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
         });
         playerRef.current.playVideo();
       } catch (e) {
-        console.warn('YT select load error:', e);
+        // Ignore fallback
       }
     }
   }, []);
@@ -207,13 +182,11 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
           },
           events: {
             onReady: (event: any) => {
-              setPlayerReady(true);
               if (isMuted) {
                 event.target.mute();
               }
             },
             onStateChange: (event: any) => {
-              // 1: PLAYING, 2: PAUSED, 0: ENDED
               if (event.data === 1) {
                 setIsPlaying(true);
               } else if (event.data === 2) {
@@ -228,7 +201,7 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
               }
             },
             onError: (err: any) => {
-              console.warn('YouTube Error, auto-switching:', err);
+              console.warn('YouTube Error:', err);
             },
           },
         });
@@ -250,8 +223,9 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
     }
   }, [currentTrack.youtubeId, handleNext, isMuted]);
 
-  // Sync Mute state with YouTube player
+  // Sync Mute state with YouTube player and synth engine
   useEffect(() => {
+    roadwaysMelodyPlayer.setMute(isMuted);
     if (playerRef.current && playerRef.current.mute && playerRef.current.unMute) {
       try {
         if (isMuted) {
@@ -279,26 +253,17 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
     let interval: NodeJS.Timeout | null = null;
     if (isPlaying) {
       interval = setInterval(() => {
-        if (playerRef.current && playerRef.current.getCurrentTime && playerRef.current.getDuration) {
-          try {
-            const cur = Math.floor(playerRef.current.getCurrentTime() || 0);
-            const dur = Math.floor(playerRef.current.getDuration() || durationSec);
-            setCurrentTimeSec(cur);
-            if (dur > 0) {
-              setProgressPercent(Math.min(100, (cur / dur) * 100));
-            }
-          } catch (e) {
-            setCurrentTimeSec((prev) => prev + 1);
-          }
-        } else {
-          setCurrentTimeSec((prev) => {
-            if (prev >= durationSec) {
+        setCurrentTimeSec((prev) => {
+          if (prev >= durationSec) {
+            if (isRepeatRef.current) {
+              return 0;
+            } else {
               handleNext();
               return 0;
             }
-            return prev + 1;
-          });
-        }
+          }
+          return prev + 1;
+        });
       }, 1000);
     }
     return () => {
@@ -306,11 +271,22 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
     };
   }, [isPlaying, durationSec, handleNext]);
 
+  useEffect(() => {
+    if (durationSec > 0) {
+      setProgressPercent(Math.min(100, (currentTimeSec / durationSec) * 100));
+    }
+  }, [currentTimeSec, durationSec]);
+
   // Play / Pause toggle
   const togglePlay = () => {
-    playCassetteClickSound();
     const nextState = !isPlaying;
     setIsPlaying(nextState);
+
+    if (nextState) {
+      roadwaysMelodyPlayer.playTrack(currentTrackIndex);
+    } else {
+      roadwaysMelodyPlayer.pause();
+    }
 
     if (playerRef.current) {
       try {
@@ -320,7 +296,7 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
           playerRef.current.pauseVideo();
         }
       } catch (e) {
-        console.warn('Play/Pause error:', e);
+        // Ignore
       }
     }
   };
@@ -350,7 +326,7 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
     return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
   };
 
-  // Keyboard Shortcuts
+  // Global Keyboard Shortcuts
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) {
@@ -418,7 +394,7 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
 
   return (
     <>
-      {/* YouTube Player Slot - Rendered visibly or offscreen so browser NEVER freezes or throttles audio */}
+      {/* YouTube Player Slot */}
       <div
         className={`fixed z-50 transition-all duration-300 ${
           showMiniScreen
@@ -460,7 +436,7 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
                     </span>
                   </h3>
                   <p className="text-[11px] text-neutral-400 font-hindi">
-                    गाना सेलेक्ट करें और तुरंत बजना शुरू हो जाएगा
+                    गाना टच करें और तुरंत शुरू हो जाएगा
                   </p>
                 </div>
               </div>
@@ -475,7 +451,6 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
 
             {/* Search & Category Filter Tabs */}
             <div className="pt-3 pb-2 space-y-2.5 shrink-0 border-b border-neutral-800/80">
-              {/* Search input */}
               <div className="relative">
                 <Search className="w-4 h-4 text-neutral-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                 <input
@@ -495,7 +470,6 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
                 )}
               </div>
 
-              {/* Category Pills */}
               <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none text-xs">
                 {[
                   { id: 'all', label: `All (${PLAYLIST_TRACKS.length})` },
@@ -542,7 +516,6 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
                       }`}
                     >
                       <div className="flex items-center gap-3 min-w-0">
-                        {/* Number or Animated Playing Equalizer */}
                         <div className="w-6 text-center shrink-0">
                           {isCurrent && isPlaying ? (
                             <div className="flex items-end justify-center gap-0.5 h-3.5">
@@ -557,7 +530,6 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
                           )}
                         </div>
 
-                        {/* Title and details */}
                         <div className="min-w-0">
                           <div className="text-xs sm:text-sm font-bold truncate flex items-center gap-1.5">
                             <span>{track.title}</span>
@@ -575,7 +547,6 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
                         </div>
                       </div>
 
-                      {/* Right Tag & Duration */}
                       <div className="text-right shrink-0 flex items-center gap-2">
                         <span className="hidden sm:inline-block text-[10px] uppercase font-mono px-2 py-0.5 rounded-md bg-neutral-800 text-amber-300/80 border border-neutral-700">
                           {track.tag}
@@ -609,7 +580,7 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
                   rel="noreferrer"
                   className="text-amber-400 hover:text-amber-300 hover:underline flex items-center gap-1 text-[11px]"
                 >
-                  YouTube Link <ExternalLink className="w-3 h-3" />
+                  YouTube <ExternalLink className="w-3 h-3" />
                 </a>
               </div>
             </div>
@@ -633,7 +604,6 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
           </div>
 
           <div className="space-y-3">
-            {/* Bus Engine Rumble */}
             <div>
               <div className="flex justify-between text-[11px] text-neutral-400 mb-1">
                 <span className="font-hindi">बस इंजन की गूँज:</span>
@@ -649,7 +619,6 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
               />
             </div>
 
-            {/* Highway Wind Breeze */}
             <div>
               <div className="flex justify-between text-[11px] text-neutral-400 mb-1">
                 <span className="font-hindi">खिड़की की ठंडी हवा:</span>
@@ -673,7 +642,7 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
         id="roadways-glass-music-player"
         className="fixed bottom-2.5 sm:bottom-4 inset-x-2 sm:inset-x-6 z-40 max-w-5xl mx-auto backdrop-blur-2xl bg-neutral-950/92 border border-amber-500/30 rounded-2xl sm:rounded-3xl shadow-[0_10px_35px_rgba(0,0,0,0.85)] px-3 sm:px-5 py-2 sm:py-3 transition-all duration-300 hover:border-amber-500/50"
       >
-        {/* Progress Bar (Clickable scrubber) */}
+        {/* Progress Bar */}
         <div
           id="player-progress-bar"
           onClick={handleSeek}
@@ -698,7 +667,6 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
               className="w-9 h-9 sm:w-11 sm:h-11 rounded-xl bg-gradient-to-tr from-amber-600 to-yellow-500 flex items-center justify-center text-neutral-950 font-bold shrink-0 shadow-lg cursor-pointer relative overflow-hidden group"
               title="Click to open 100 Songs Cassette Tape Playlist (L)"
             >
-              {/* Rotating Tape Reels */}
               <div className="flex items-center gap-1">
                 <div
                   className={`w-3 h-3 sm:w-3.5 sm:h-3.5 rounded-full border-2 border-neutral-950 flex items-center justify-center ${
