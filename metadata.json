@@ -1,0 +1,6 @@
+{
+  "name": "ROADWAYS Safar",
+  "description": "An immersive nostalgic journey through the iconic Indian State Roadways bus memories, window views, roadside dhabas, classic pressure horn, punch tickets, and timeless highway melodies.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
